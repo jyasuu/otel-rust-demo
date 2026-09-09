@@ -1,3 +1,7 @@
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+
 receivers:
   otlp:
     protocols:
@@ -8,6 +12,31 @@ receivers:
 
 processors:
   batch: {}
+  # Drop spans from Prometheus scraping the services' /metrics endpoints, so
+  # those trivial one-span traces don't clutter Jaeger.
+  filter/drop-scrapes:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["route"] == "/metrics"'
+  # Prune noisy internal tracing fields (frame/debug info) from every span
+  # before export, keeping the traces easier to read.
+  attributes/prune:
+    actions:
+      - key: busy_ns
+        action: delete
+      - key: idle_ns
+        action: delete
+      - key: code.file.path
+        action: delete
+      - key: code.line.number
+        action: delete
+      - key: code.module.name
+        action: delete
+      - key: thread.id
+        action: delete
+      - key: thread.name
+        action: delete
   # Tail sampling: decide on whole traces (not span-by-span), so a failure
   # anywhere in the app -> billing -> gateway chain keeps the ENTIRE trace.
   # We always keep traces containing an ERROR-status span, and probabilistically
@@ -40,10 +69,24 @@ exporters:
     verbosity: detailed
 
 service:
+  # Enable the collector's own diagnostics: a pprof endpoint and OTel SDK
+  # telemetry (own log level + own metrics on :8888 for Prometheus scraping).
+  extensions: [pprof]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch, tail_sampling]
+      processors: [filter/drop-scrapes, attributes/prune, batch, tail_sampling]
       exporters: [otlp/jaeger, debug]
     logs:
       receivers: [otlp]

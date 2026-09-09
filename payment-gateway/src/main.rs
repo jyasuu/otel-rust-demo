@@ -227,7 +227,8 @@ async fn propagate_tracing(request: Request, next: Next) -> Response {
     let parent_cx = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
     });
-    let span = info_span!("handle request");
+    let route = request.uri().path();
+    let span = info_span!("handle request", route);
     let _ = span.set_parent(parent_cx);
     next.run(request).instrument(span).await
 }

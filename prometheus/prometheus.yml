@@ -16,3 +16,8 @@ scrape_configs:
     static_configs:
       - targets: ["payment-gateway:8082"]
     metrics_path: /metrics
+
+  # The OTel Collector's own telemetry (its SDK metrics, on :8888).
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:8888"]

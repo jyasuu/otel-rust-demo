@@ -54,6 +54,11 @@ payment-gateway ─────────────► otel-collector (trace
   traces that contain an error span, and probabilistically dropping ~half of
   the healthy ones. Because the decision is made on the *whole* trace, a kept
   chain always spans all three services (it can't be cut mid-trace).
+- **Exporter hygiene**: a `filter` processor drops the repetitive Prometheus
+  `/metrics` scrape traces before they hit Jaeger, and an `attributes`
+  processor prunes noisy internal fields (`code.*`, `busy_ns`, `idle_ns`,
+  `thread.*`). The collector itself is observable too: a `pprof` endpoint on
+  `:1777` and its own SDK metrics on `:8888`, scraped by Prometheus.
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus

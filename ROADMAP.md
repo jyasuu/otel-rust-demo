@@ -101,11 +101,20 @@ Legend: `[x]` = done, `[ ]` = not started.
   Replace the app→billing call with a `tonic` client/server and propagate
   OTel context via gRPC metadata instead of HTTP headers. Note the differences
   in instrumentation (interceptors) vs. axum middleware.
-- [ ] **10. Collector hardening**
+- [x] **10. Collector hardening**
   45min
-  Enable collector `service.telemetry` (its own metrics/logs), `pprof`, and
-  an `attributes`/`filter` processor to redact or transform span attributes
-  before export.
+  Done: the collector now runs with its own diagnostics on:
+  - `extensions: [pprof]` — `GET /debug/pprof` on `:1777`;
+  - `service.telemetry` — collector SDK metrics on `:8888` (scraped by a new
+    Prometheus job, e.g. `otelcol_receiver_accepted_spans`) + its own logs at
+    `level: info`;
+  - `filter/drop-scrapes` — OTTL span filter that drops `route == "/metrics"`
+    scrape traces (requires every service to tag spans with `route`, so
+    `payment-gateway` now sets it too);
+  - `attributes/prune` — removes noisy internal fields (`code.*`, `busy_ns`,
+    `idle_ns`, `thread.*`) before export.
+  Verified: pprof 200; collector target `up` in Prometheus; 0 `/metrics` spans
+  in Jaeger from all three services; fresh traces carry no `code.*`/`thread.*`.
 - [ ] **11. Alerting + dashboard polish**
   1h
   Add Grafana alert rules (e.g. error rate > threshold), a service variable
