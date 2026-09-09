@@ -45,6 +45,9 @@ payment-gateway ─────────────► otel-collector (trace
   `otel-rust-demo` also sends a **`user.id` baggage item** on each `/charge`
   call; `billing-service` reads it back and records it as a `user.id` span
   attribute, so that value is visible crossing the service boundary in Jaeger.
+  Failure endpoints (`/error`) additionally set `SpanStatus::Error` with
+  standard `exception.type`/`exception.message` attributes, so broken requests
+  show up red in Jaeger complete with the reason.
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus
@@ -65,10 +68,11 @@ payment-gateway ─────────────► otel-collector (trace
 |------------------|-------------|------------------------------------------------------------|
 | `otel-rust-demo` | `GET /`       | Trivial handler, one span                                 |
 | `otel-rust-demo` | `GET /work`   | Multi-step work + a real downstream HTTP call to billing  |
-| `otel-rust-demo` | `GET /error`  | Always returns 500, to see error spans/traces             |
+| `otel-rust-demo` | `GET /error`  | Always returns 500; marks the span ERROR with `exception.*` attributes |
 | `otel-rust-demo` | `GET /health` | Plain liveness check                                       |
 | `otel-rust-demo` | `GET /metrics`| Prometheus scrape endpoint                                |
 | `billing-service`| `GET /charge` | Simulated payment, nested spans — continues the trace     |
+| `billing-service`| `GET /error`  | Simulated declined card; marks the span ERROR (red in Jaeger) |
 | `billing-service`| `GET /health` | Plain liveness check                                       |
 | `billing-service`| `GET /metrics`| Prometheus scrape endpoint                                |
 | `payment-gateway`| `GET /process`| External payment processing, nested spans — continues the trace |
@@ -104,6 +108,7 @@ Captured against a running stack (see `docs/screenshots/`):
 |------|------------|
 | Jaeger — 3-hop trace across all three services | `docs/screenshots/jaeger-3-hop-trace.png` |
 | Jaeger — `user.id` baggage carried across the app → billing hop | `docs/screenshots/jaeger-baggage.png` |
+| Jaeger — error span from `/error` (`error=true`, `exception.type`, `otel.status_code=ERROR`) | `docs/screenshots/jaeger-error-span.png` |
 | Jaeger — cross-service trace (app + billing) | `docs/screenshots/jaeger-cross-service.png` |
 | Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
 | Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |

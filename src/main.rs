@@ -17,7 +17,7 @@ use opentelemetry::{
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
-    trace::TracerProvider as _,
+    trace::{Status, TracerProvider as _},
     KeyValue,
 };
 use opentelemetry_http::HeaderInjector;
@@ -306,6 +306,12 @@ async fn call_downstream_service() {
 
 #[instrument]
 async fn force_error() -> impl IntoResponse {
+    // Mark the current span as failed so the trace shows red in Jaeger, and
+    // attach the conventional exception.* attributes for error details.
+    let span = tracing::Span::current();
+    span.set_status(Status::error("simulated failure forced by /error"));
+    span.set_attribute("exception.type", "InternalServerError");
+    span.set_attribute("exception.message", "simulated failure");
     warn!("simulating an internal error");
     (StatusCode::INTERNAL_SERVER_ERROR, "simulated failure")
 }

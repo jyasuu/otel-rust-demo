@@ -17,7 +17,7 @@ use opentelemetry::{
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
-    trace::TracerProvider as _,
+    trace::{Status, TracerProvider as _},
     KeyValue, StringValue,
 };
 use opentelemetry_http::{HeaderExtractor, HeaderInjector};
@@ -158,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/charge", get(charge))
+        .route("/error", get(force_error))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
@@ -260,6 +261,19 @@ async fn charge() -> impl IntoResponse {
 #[instrument]
 async fn verify_card() {
     tokio::time::sleep(Duration::from_millis(pseudo_random_range(5, 30))).await;
+}
+
+/// Simulates a declined payment. Like the app's `/error`, it marks the
+/// current span as failed with standard `exception.*` attributes, so the
+/// failure stands out (red) in Jaeger and carries the reason.
+#[instrument]
+async fn force_error() -> impl IntoResponse {
+    let span = tracing::Span::current();
+    span.set_status(Status::error("card declined by billing-service"));
+    span.set_attribute("exception.type", "CardDeclined");
+    span.set_attribute("exception.message", "payment method rejected");
+    warn!("simulating a declined payment");
+    (StatusCode::PAYMENT_REQUIRED, "card declined")
 }
 
 #[instrument]

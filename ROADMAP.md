@@ -32,11 +32,15 @@ Legend: `[x]` = done, `[ ]` = not started.
   `LogsService` is unimplemented), so the logs pipeline exports to the
   collector's `debug` exporter only. To persist logs, point the exporter at
   Loki or another OTLP log backend.
-- [ ] **2. Span status + error attributes**
+- [x] **2. Span status + error attributes**
   15–30min · beginner
-  On `/error` (and a billing equivalent) set `SpanStatus::Error` with an
-  `exception.message`/`exception.type` attribute so failures stand out in
-  Jaeger instead of just returning HTTP 500.
+  Done: `/error` on `otel-rust-demo` and `/error` on `billing-service`
+  (`force_error`) mark the current span as `Status::error(description)` and
+  attach `exception.type`/`exception.message` attributes via
+  `OpenTelemetrySpanExt::set_status`/`set_attribute`, so failures show red in
+  Jaeger with the reason at a glance (see
+  `docs/screenshots/jaeger-error-span.png`). The collector maps OTLP ERROR
+  status to Jaeger's `error=true` tag.
 - [ ] **3. Request correlation tags**
   15min · beginner
   Add a `route`/`client` tag derived from the request to every span (e.g. via
