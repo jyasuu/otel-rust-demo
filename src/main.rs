@@ -17,7 +17,7 @@ use opentelemetry::{
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
-    trace::{Status, TracerProvider as _},
+    trace::{Status, TraceContextExt as _, TracerProvider as _},
     KeyValue,
 };
 use opentelemetry_http::HeaderInjector;
@@ -284,7 +284,27 @@ async fn do_work() -> impl IntoResponse {
     let rows = query_database().await;
     call_downstream_service().await;
     info!(rows, "work complete");
+    // Emit a log record carrying the current trace/span ids as fields, so it
+    // can be matched back to its trace (see `log_with_trace_context`).
+    log_with_trace_context("work finished");
     (StatusCode::OK, format!("work done, rows={rows}"))
+}
+
+/// Emit an INFO log record that explicitly includes the current span's
+/// `trace_id`/`span_id`. The OTel log record automatically carries its
+/// TraceContext too, so the collector output shows both and you can line them
+/// up with the same trace in Jaeger.
+fn log_with_trace_context(message: &str) {
+    let context = tracing::Span::current().context();
+    let span = context.span();
+    let span_context = span.span_context();
+    let trace_id = span_context.trace_id();
+    let span_id = span_context.span_id();
+    tracing::info!(
+        trace_id = %trace_id,
+        span_id = %span_id,
+        "{message}"
+    );
 }
 
 #[instrument]

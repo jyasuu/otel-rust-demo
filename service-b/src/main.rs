@@ -17,7 +17,7 @@ use opentelemetry::{
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
-    trace::{Status, TracerProvider as _},
+    trace::{Status, TraceContextExt as _, TracerProvider as _},
     KeyValue, StringValue,
 };
 use opentelemetry_http::{HeaderExtractor, HeaderInjector};
@@ -261,7 +261,24 @@ async fn charge() -> impl IntoResponse {
     process_payment().await;
     let amount = pseudo_random_range(10, 500);
     info!(amount, "charge complete");
+    log_with_trace_context("charge finished");
     (StatusCode::OK, format!("charged {amount}.00"))
+}
+
+/// Emit an INFO log record that explicitly includes the current span's
+/// `trace_id`/`span_id` so the log record can be matched back to its trace
+/// (visible both as fields and as the record's TraceContext).
+fn log_with_trace_context(message: &str) {
+    let context = tracing::Span::current().context();
+    let span = context.span();
+    let span_context = span.span_context();
+    let trace_id = span_context.trace_id();
+    let span_id = span_context.span_id();
+    tracing::info!(
+        trace_id = %trace_id,
+        span_id = %span_id,
+        "{message}"
+    );
 }
 
 #[instrument]

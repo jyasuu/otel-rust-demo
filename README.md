@@ -61,8 +61,11 @@ payment-gateway ─────────────► otel-collector (trace
 - **Logs**: both services bridge `tracing` events into an OTLP log exporter
   (`opentelemetry-appender-tracing`), which the collector receives on its
   `logs` pipeline. The legacy Jaeger `all-in-one` image cannot ingest OTLP
-  logs, so they're printed by the collector's `debug` exporter — watch them
-  with `docker compose logs -f otel-collector`.
+  logs, so they're printed by the collector's `debug/logs` exporter (run at
+  `verbosity: detailed`, so each record shows its `Trace ID`/`Span ID`) —
+  watch them with `docker compose logs otel-collector`. Since `work finished`
+  / `charge finished` log records carry the span's `trace_id`/`span_id` as
+  fields, you can match a log record to the exact same trace in Jaeger.
 
 ## Endpoints
 

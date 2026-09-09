@@ -16,6 +16,10 @@ exporters:
       insecure: true
   debug:
     verbosity: basic
+  # Verbose output for the logs pipeline so we can see each log record's
+  # TraceID/SpanID (and correlate them with the matching trace in Jaeger).
+  debug/logs:
+    verbosity: detailed
 
 service:
   pipelines:
@@ -26,4 +30,4 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug/logs]

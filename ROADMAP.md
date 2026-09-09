@@ -67,11 +67,16 @@ Legend: `[x]` = done, `[ ]` = not started.
   Add a `tail_sampling` processor to the collector with a policy that keeps
   traces sampled when any span is an error, so the app→billing chain is never
   cut mid-trace. Compare with `probabilistic_sampler_processor` behavior.
-- [ ] **6. Logs ↔ traces correlation**
+- [x] **6. Logs ↔ traces correlation**
   30min
-  Emit a `tracing::info!` that includes `trace_id`/`span_id` fields from the
-  current span (via `tracing_opentelemetry::OpenTelemetrySpanExt`), and verify
-  the IDs line up between the log record in Jaeger and its trace.
+  Done: `log_with_trace_context` (in both services) emits an INFO record that
+  carries the current span's `trace_id`/`span_id` as explicit fields
+  (`OpenTelemetrySpanExt::context` + `TraceContextExt::span().span_context()`),
+  and the OTLP log record automatically gets the same IDs as its TraceContext.
+  The collector's `debug/logs` exporter (added to the `logs` pipeline) runs at
+  `verbosity: detailed` and prints both — e.g. `Trace ID: 509b12eb…` on the
+  log record and as `trace_id`/`span_id` attributes, matching the trace of the
+  same ID in Jaeger.
 - [ ] **7. Prometheus exemplars ↔ traces**
   30min
   Enable exemplars in the OTel/Prometheus bridge and a `trace_exemplar`
