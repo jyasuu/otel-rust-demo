@@ -50,6 +50,10 @@ payment-gateway ─────────────► otel-collector (trace
   show up red in Jaeger complete with the reason. Every request also carries
   `method`/`route`/`client` (User-Agent) tags from a custom `TraceLayer`
   `MakeSpan`, making it easy to filter traces "by client" in Jaeger.
+- **Sampling**: the collector runs `tail_sampling` on traces — always keeping
+  traces that contain an error span, and probabilistically dropping ~half of
+  the healthy ones. Because the decision is made on the *whole* trace, a kept
+  chain always spans all three services (it can't be cut mid-trace).
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus

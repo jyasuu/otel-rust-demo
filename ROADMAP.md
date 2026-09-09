@@ -62,11 +62,15 @@ Legend: `[x]` = done, `[ ]` = not started.
   `docs/screenshots/jaeger-baggage.png`). Note: `BaggagePropagator` must be
   registered in `TextMapCompositePropagator` on the auto-injecting side —
   `global::set_text_map_propagator` defaults to a no-op.
-- [ ] **5. Sampling that keeps cross-service traces complete**
+- [x] **5. Sampling that keeps cross-service traces complete**
   45min
-  Add a `tail_sampling` processor to the collector with a policy that keeps
-  traces sampled when any span is an error, so the app→billing chain is never
-  cut mid-trace. Compare with `probabilistic_sampler_processor` behavior.
+  Done: the collector's traces pipeline runs through `tail_sampling` with two
+  policies — `keep-errors` (retain any trace containing an ERROR-status span)
+  and `sampled` (`probabilistic` @ 50%). Verified: 10/10 `/error` traces kept
+  on both services, while ~half the healthy `/work` traces were dropped — and
+  crucially the kept ones are whole 3-service chains (app → billing → gateway),
+  never cut mid-trace (unlike a head-sampling `probabilistic_sampler_processor`,
+  which would randomly shed spans within a trace).
 - [x] **6. Logs ↔ traces correlation**
   30min
   Done: `log_with_trace_context` (in both services) emits an INFO record that

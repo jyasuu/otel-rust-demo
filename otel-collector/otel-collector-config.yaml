@@ -8,6 +8,24 @@ receivers:
 
 processors:
   batch: {}
+  # Tail sampling: decide on whole traces (not span-by-span), so a failure
+  # anywhere in the app -> billing -> gateway chain keeps the ENTIRE trace.
+  # We always keep traces containing an ERROR-status span, and probabilistically
+  # drop ~half of the healthy ones. Compare with `probabilistic_sampler_processor`
+  # (a deterministic head-sampler that would just cut a random % of spans).
+  tail_sampling:
+    decision_wait: 5s
+    num_traces: 100000
+    expected_new_traces_per_sec: 20
+    policies:
+      - name: keep-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: sampled
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 50
 
 exporters:
   otlp/jaeger:
@@ -25,7 +43,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [batch, tail_sampling]
       exporters: [otlp/jaeger, debug]
     logs:
       receivers: [otlp]
