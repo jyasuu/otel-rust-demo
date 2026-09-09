@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     extract::{Request, State},
-    http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
+    http::{header::CONTENT_TYPE, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -19,7 +19,7 @@ use opentelemetry::{
     trace::TracerProvider as _,
     KeyValue,
 };
-use opentelemetry_http::{HeaderExtractor, HeaderInjector};
+use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
@@ -34,10 +34,8 @@ use tracing::{info, info_span, instrument, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-const SERVICE_NAME: &str = "billing-service";
+const SERVICE_NAME: &str = "payment-gateway";
 
-/// Shared application state: the Prometheus registry backing our /metrics
-/// endpoint, plus the instruments we record against on every request.
 struct AppState {
     prometheus_registry: Registry,
     http_requests_total: Counter<u64>,
@@ -103,8 +101,7 @@ fn init_meter_provider(resource: Resource) -> anyhow::Result<(SdkMeterProvider, 
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // The default global propagator is a no-op; we need W3C tracecontext so
-    // incoming requests can continue the caller's trace.
+    // W3C tracecontext + baggage so incoming requests continue the caller's trace.
     global::set_text_map_propagator(TextMapCompositePropagator::new(vec![
         Box::new(TraceContextPropagator::new()),
         Box::new(BaggagePropagator::new()),
@@ -134,8 +131,7 @@ async fn main() -> anyhow::Result<()> {
         .with_description("Number of HTTP requests currently being handled")
         .build();
 
-    // --- Logs -----------------------------------------------------------
-    let logger_provider = init_logger_provider(resource.clone())?;
+    let logger_provider = init_logger_provider(resource)?;
     let log_layer = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
         &logger_provider,
     );
@@ -156,14 +152,14 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/charge", get(charge))
+        .route("/process", get(process_payment))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
         .layer(middleware::from_fn(propagate_tracing))
         .with_state(state);
 
-    let addr: SocketAddr = "0.0.0.0:8081".parse()?;
+    let addr: SocketAddr = "0.0.0.0:8082".parse()?;
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening");
     axum::serve(listener, app).await?;
@@ -175,7 +171,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Records request-scoped metrics around every handler.
 async fn track_metrics(
     State(state): State<Arc<AppState>>,
     request: Request,
@@ -209,7 +204,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
     let mut buffer = Vec::new();
 
     if let Err(err) = encoder.encode(&metric_families, &mut buffer) {
-        tracing::warn!(%err, "failed to encode prometheus metrics");
+        warn!(%err, "failed to encode prometheus metrics");
         return (StatusCode::INTERNAL_SERVER_ERROR, "failed to encode metrics").into_response();
     }
 
@@ -226,9 +221,8 @@ async fn health() -> &'static str {
 }
 
 /// Unless the caller sent us a valid W3C `traceparent`, start each request
-/// as a fresh root span. When this service is called by `otel-rust-demo`,
-/// the extracted context becomes the parent, so the whole cross-service
-/// flow shows up as one connected tree in Jaeger.
+/// as a fresh root span. Called by `billing-service`, this continues the
+/// existing trace instead.
 async fn propagate_tracing(request: Request, next: Next) -> Response {
     let parent_cx = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
@@ -238,50 +232,29 @@ async fn propagate_tracing(request: Request, next: Next) -> Response {
     next.run(request).instrument(span).await
 }
 
-/// Simulates charging a payment method: a couple of child spans so the
-/// cross-service trace has its own little tree in Jaeger.
+/// Simulates processing a payment through an external gateway: a couple of
+/// child spans so this service adds its own little tree to the trace.
 #[instrument]
-async fn charge() -> impl IntoResponse {
-    info!("starting charge");
-    verify_card().await;
-    process_payment().await;
-    let amount = pseudo_random_range(10, 500);
-    info!(amount, "charge complete");
-    (StatusCode::OK, format!("charged {amount}.00"))
+async fn process_payment() -> impl IntoResponse {
+    info!("starting payment processing");
+    authorize().await;
+    capture().await;
+    let txn_id = pseudo_random_range(1000, 9999);
+    info!(txn_id, "payment processed");
+    (StatusCode::OK, format!("txn {txn_id}"))
 }
 
 #[instrument]
-async fn verify_card() {
-    tokio::time::sleep(Duration::from_millis(pseudo_random_range(5, 30))).await;
-}
-
-#[instrument]
-async fn process_payment() {
-    let gateway_url = std::env::var("PAYMENT_GATEWAY_URL")
-        .unwrap_or_else(|_| "http://localhost:8082".to_string());
-
-    // Inject the current span's trace context so payment-gateway continues
-    // the same trace (otl-rust-demo -> billing-service -> payment-gateway).
-    let mut headers = HeaderMap::new();
-    let cx = tracing::Span::current().context();
-    global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&cx, &mut HeaderInjector(&mut headers))
-    });
-
-    let client = reqwest::Client::new();
-    match client
-        .get(format!("{gateway_url}/process"))
-        .headers(headers)
-        .send()
-        .await
-    {
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            info!(status = %status, body, "payment gateway responded");
-        }
-        Err(err) => warn!(%err, "payment gateway unavailable"),
+async fn authorize() {
+    tokio::time::sleep(Duration::from_millis(pseudo_random_range(10, 60))).await;
+    if pseudo_random_range(0, 30) == 0 {
+        warn!("authorization took longer than expected");
     }
+}
+
+#[instrument]
+async fn capture() {
+    tokio::time::sleep(Duration::from_millis(pseudo_random_range(5, 40))).await;
 }
 
 fn pseudo_random_range(min: u64, max: u64) -> u64 {

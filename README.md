@@ -1,12 +1,15 @@
 # otel-rust-demo
 
-A small **two-microservice** Axum demo instrumented with OpenTelemetry, wired
-up to a full local observability stack: **Jaeger** (traces), **Prometheus**
-(metrics), and **Grafana** (dashboards over both).
+A small **three-microservice** Axum demo instrumented with OpenTelemetry,
+wired up to a full local observability stack: **Jaeger** (traces),
+**Prometheus** (metrics), and **Grafana** (dashboards over both).
 
 - `otel-rust-demo` (port 8080) — the "frontend" service; its `/work` endpoint
   performs nested work and then calls the billing service down the line.
-- `billing-service` (port 8081) — the downstream payment service.
+- `billing-service` (port 8081) — the downstream payment service; `/charge`
+  calls the payment gateway.
+- `payment-gateway` (port 8082) — the external payment processor, at the end
+  of the chain.
 
 Want to use this as a learning lab? See [`ROADMAP.md`](./ROADMAP.md) for a
 curated set of practice exercises (logs, sampling, gRPC, and more).
@@ -20,6 +23,10 @@ axum app ───────────────────► otel-colle
    │  │ HTTP /charge (W3C trace context propagated)
    │  ▼
 billing-service ─────────────► otel-collector (traces)
+   │  ▲
+   │  │ HTTP /process (W3C trace context propagated)
+   │  ▼
+payment-gateway ─────────────► otel-collector (traces)
    │
    └── /metrics (Prometheus text) ◄────── prometheus (scrapes every 5s) ◄── grafana (3000)
                                                      │
@@ -27,22 +34,22 @@ billing-service ─────────────► otel-collector (trace
                                            (grafana also queries jaeger directly)
 ```
 
-- **Traces**: both services export spans over OTLP/gRPC to an OpenTelemetry
-  Collector, which forwards them on to Jaeger. Each HTTP request becomes a
-  root span (`tower_http::trace::TraceLayer`); `/work` fans out into child
-  spans (`validate_input`, `query_database`, `call_downstream_service`) and
-  then calls `billing-service/charge`, which itself fans out into
-  `verify_card`/`process_payment`. The W3C trace context is injected into the
-  outgoing HTTP request, so Jaeger shows the **whole cross-service trace as
-  one tree**.
+- **Traces**: all three services export spans over OTLP/gRPC to an
+  OpenTelemetry Collector, which forwards them on to Jaeger. Each HTTP
+  request becomes a root span; `/work` fans out into child spans
+  (`validate_input`, `query_database`, `call_downstream_service`), calls
+  `billing-service/charge` (`verify_card`, `process_payment`), which calls
+  `payment-gateway/process` (`authorize`, `capture`). The W3C trace context
+  is injected at every hop, so Jaeger shows the **whole cross-service trace
+  as one tree** across three microservices.
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus
-  text format at `GET /metrics`. Prometheus scrapes both endpoints directly
-  — no collector hop needed for metrics in this demo.
+  text format at `GET /metrics`. Prometheus scrapes all three endpoints
+  directly — no collector hop needed for metrics in this demo.
 - **Grafana** is pre-provisioned with both a Prometheus and a Jaeger
   datasource, plus a starter dashboard (request rate, error rate, p95
-  latency, in-flight requests) that distinguishes the two services.
+  latency, in-flight requests) that distinguishes the services.
 - **Logs**: both services bridge `tracing` events into an OTLP log exporter
   (`opentelemetry-appender-tracing`), which the collector receives on its
   `logs` pipeline. The legacy Jaeger `all-in-one` image cannot ingest OTLP
@@ -61,6 +68,9 @@ billing-service ─────────────► otel-collector (trace
 | `billing-service`| `GET /charge` | Simulated payment, nested spans — continues the trace     |
 | `billing-service`| `GET /health` | Plain liveness check                                       |
 | `billing-service`| `GET /metrics`| Prometheus scrape endpoint                                |
+| `payment-gateway`| `GET /process`| External payment processing, nested spans — continues the trace |
+| `payment-gateway`| `GET /health` | Plain liveness check                                       |
+| `payment-gateway`| `GET /metrics`| Prometheus scrape endpoint                                |
 
 ## Running it
 
@@ -71,14 +81,14 @@ docker compose up --build
 Then:
 
 - Hit the app a few times to generate data (each `/work` also exercises the
-  billing service):
+  billing and payment services):
   ```bash
   for i in $(seq 1 30); do curl -s localhost:8080/work >/dev/null; done
   curl -s localhost:8080/error >/dev/null
   ```
-- **Jaeger UI** → http://localhost:16686 (select service `otel-rust-demo` or
-  `billing-service`) — open a `/work` trace to see one tree made up of spans
-  from *both* services.
+- **Jaeger UI** → http://localhost:16686 (select `otel-rust-demo`,
+  `billing-service`, or `payment-gateway`) — open a `/work` trace to see one
+  tree made up of spans from *all three* services.
 - **Prometheus** → http://localhost:9090 (try the query `http_requests_total`)
 - **Grafana** → http://localhost:3000 (anonymous admin access is enabled for
   this demo — the "otel-rust-demo" dashboard is already provisioned)
@@ -89,7 +99,8 @@ Captured against a running stack (see `docs/screenshots/`):
 
 | View | Screenshot |
 |------|------------|
-| Jaeger — cross-service trace (both services in one tree) | `docs/screenshots/jaeger-cross-service.png` |
+| Jaeger — 3-hop trace across all three services | `docs/screenshots/jaeger-3-hop-trace.png` |
+| Jaeger — cross-service trace (app + billing) | `docs/screenshots/jaeger-cross-service.png` |
 | Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
 | Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |
 
@@ -101,10 +112,13 @@ the collector + backends only and point the services at `localhost:4317`:
 ```bash
 docker compose up otel-collector jaeger prometheus grafana
 
-# terminal 1 — billing service
+# terminal 1 — payment gateway
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run --manifest-path payment-gateway/Cargo.toml
+
+# terminal 2 — billing service (defaults to PAYMENT_GATEWAY_URL=http://localhost:8082)
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run --manifest-path service-b/Cargo.toml
 
-# terminal 2 — main app (defaults to BILLING_SERVICE_URL=http://localhost:8081)
+# terminal 3 — main app (defaults to BILLING_SERVICE_URL=http://localhost:8081)
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run
 ```
 

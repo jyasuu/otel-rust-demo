@@ -1,10 +1,10 @@
 [package]
-name = "billing-service"
+name = "payment-gateway"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "billing-service"
+name = "payment-gateway"
 path = "src/main.rs"
 
 [dependencies]
@@ -31,8 +31,5 @@ prometheus = "0.14"
 
 # W3C trace context extraction from incoming headers
 opentelemetry-http = "0.32"
-
-# Outbound HTTP to the payment gateway
-reqwest = "0.12"
 
 anyhow = "1"

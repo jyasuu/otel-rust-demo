@@ -11,3 +11,8 @@ scrape_configs:
     static_configs:
       - targets: ["billing-service:8081"]
     metrics_path: /metrics
+
+  - job_name: "payment-gateway"
+    static_configs:
+      - targets: ["payment-gateway:8082"]
+    metrics_path: /metrics

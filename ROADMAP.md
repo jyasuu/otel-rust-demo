@@ -69,11 +69,13 @@ Legend: `[x]` = done, `[ ]` = not started.
 
 ## Advanced
 
-- [ ] **8. Third hop — `payment-gateway`**
+- [x] **8. Third hop — `payment-gateway`**
   1h
-  Add a third crate so the chain is app → billing → gateway. Practice
-  multi-hop propagation (headers must keep flowing), per-hop resource
-  attributes, and realistic latency variance per service.
+  Done: `payment-gateway` (port 8082) sits behind `billing-service`, so the
+  chain is app → billing → gateway. Multi-hop W3C propagation keeps all three
+  services in one Jaeger tree (see
+  `docs/screenshots/jaeger-3-hop-trace.png`), and each hop exports its own
+  spans, metrics, and logs.
 - [ ] **9. gRPC (tonic) instead of HTTP**
   1–1.5h
   Replace the app→billing call with a `tonic` client/server and propagate

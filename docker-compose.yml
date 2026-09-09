@@ -19,6 +19,19 @@ services:
       - "8081:8081"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - PAYMENT_GATEWAY_URL=http://payment-gateway:8082
+      - RUST_LOG=info
+    depends_on:
+      - otel-collector
+      - payment-gateway
+
+  payment-gateway:
+    build: ./payment-gateway
+    container_name: payment-gateway
+    ports:
+      - "8082:8082"
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - RUST_LOG=info
     depends_on:
       - otel-collector
@@ -53,6 +66,7 @@ services:
     depends_on:
       - app
       - billing-service
+      - payment-gateway
 
   grafana:
     image: grafana/grafana:latest
