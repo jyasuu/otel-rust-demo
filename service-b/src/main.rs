@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     extract::{Request, State},
-    http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
+    http::{header::CONTENT_TYPE, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -19,7 +19,7 @@ use opentelemetry::{
     trace::TracerProvider as _,
     KeyValue,
 };
-use opentelemetry_http::HeaderInjector;
+use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::SdkMeterProvider,
@@ -29,12 +29,11 @@ use opentelemetry_sdk::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
-use tracing::{info, instrument, warn};
+use tracing::{info, info_span, instrument, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-const SERVICE_NAME: &str = "otel-rust-demo";
+const SERVICE_NAME: &str = "billing-service";
 
 /// Shared application state: the Prometheus registry backing our /metrics
 /// endpoint, plus the instruments we record against on every request.
@@ -52,9 +51,6 @@ fn build_resource() -> Resource {
         .build()
 }
 
-/// Wire up an OTLP/gRPC span exporter pointing at an OTel Collector
-/// (which in turn forwards to Jaeger) and wrap it in a batching tracer
-/// provider.
 fn init_tracer_provider(resource: Resource) -> anyhow::Result<SdkTracerProvider> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
@@ -72,9 +68,6 @@ fn init_tracer_provider(resource: Resource) -> anyhow::Result<SdkTracerProvider>
     Ok(provider)
 }
 
-/// Wire up a Prometheus exporter as an OpenTelemetry metrics reader. This
-/// gives us a standard OTel `Meter` API in the app, while metrics are
-/// exposed in plain Prometheus text format at `/metrics` for scraping.
 fn init_meter_provider(resource: Resource) -> anyhow::Result<(SdkMeterProvider, Registry)> {
     let registry = Registry::new();
 
@@ -93,8 +86,7 @@ fn init_meter_provider(resource: Resource) -> anyhow::Result<(SdkMeterProvider, 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // The default global propagator is a no-op; we need W3C tracecontext so
-    // outgoing requests (and, in billing-service, incoming ones) carry a
-    // valid `traceparent` header.
+    // incoming requests can continue the caller's trace.
     global::set_text_map_propagator(TextMapCompositePropagator::new(vec![
         Box::new(TraceContextPropagator::new()),
         Box::new(BaggagePropagator::new()),
@@ -102,13 +94,11 @@ async fn main() -> anyhow::Result<()> {
 
     let resource = build_resource();
 
-    // --- Traces ---------------------------------------------------------
     let tracer_provider = init_tracer_provider(resource.clone())?;
     global::set_tracer_provider(tracer_provider.clone());
     let tracer = tracer_provider.tracer(SERVICE_NAME);
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    // --- Metrics ----------------------------------------------------------
     let (meter_provider, prometheus_registry) = init_meter_provider(resource)?;
     global::set_meter_provider(meter_provider.clone());
     let meter = meter_provider.meter(SERVICE_NAME);
@@ -126,7 +116,6 @@ async fn main() -> anyhow::Result<()> {
         .with_description("Number of HTTP requests currently being handled")
         .build();
 
-    // --- tracing subscriber: pretty console logs + OTel export ----------
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(env_filter)
@@ -142,30 +131,25 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/", get(hello))
-        .route("/work", get(do_work))
-        .route("/error", get(force_error))
+        .route("/charge", get(charge))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
-        .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
+        .layer(middleware::from_fn(propagate_tracing))
         .with_state(state);
 
-    let addr: SocketAddr = "0.0.0.0:8080".parse()?;
+    let addr: SocketAddr = "0.0.0.0:8081".parse()?;
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening");
     axum::serve(listener, app).await?;
 
-    // Flush any buffered spans/metrics before exiting.
     let _ = tracer_provider.shutdown();
     let _ = meter_provider.shutdown();
 
     Ok(())
 }
 
-/// Records request-scoped metrics around every handler. Runs *inside* the
-/// per-request tracing span created by `TraceLayer`, so these numbers line
-/// up with the traces you'll see in Jaeger.
+/// Records request-scoped metrics around every handler.
 async fn track_metrics(
     State(state): State<Arc<AppState>>,
     request: Request,
@@ -199,7 +183,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
     let mut buffer = Vec::new();
 
     if let Err(err) = encoder.encode(&metric_families, &mut buffer) {
-        warn!(%err, "failed to encode prometheus metrics");
+        tracing::warn!(%err, "failed to encode prometheus metrics");
         return (StatusCode::INTERNAL_SERVER_ERROR, "failed to encode metrics").into_response();
     }
 
@@ -215,67 +199,41 @@ async fn health() -> &'static str {
     "ok"
 }
 
-#[instrument]
-async fn hello() -> &'static str {
-    info!("handling hello request");
-    "Hello, OpenTelemetry!"
-}
-
-/// Simulates a small unit of work made up of a few sub-steps, each its own
-/// child span, so a single request produces a multi-span trace in Jaeger.
-#[instrument]
-async fn do_work() -> impl IntoResponse {
-    info!("starting work");
-    validate_input().await;
-    let rows = query_database().await;
-    call_downstream_service().await;
-    info!(rows, "work complete");
-    (StatusCode::OK, format!("work done, rows={rows}"))
-}
-
-#[instrument]
-async fn validate_input() {
-    tokio::time::sleep(Duration::from_millis(pseudo_random_range(5, 20))).await;
-}
-
-#[instrument]
-async fn query_database() -> u64 {
-    tokio::time::sleep(Duration::from_millis(pseudo_random_range(10, 60))).await;
-    pseudo_random_range(1, 100)
-}
-
-#[instrument]
-async fn call_downstream_service() {
-    let billing_url = std::env::var("BILLING_SERVICE_URL")
-        .unwrap_or_else(|_| "http://localhost:8081".to_string());
-
-    // Inject the current span's trace context into the outgoing request so
-    // billing-service continues the same trace (visible as one tree in Jaeger).
-    let mut headers = HeaderMap::new();
-    let cx = tracing::Span::current().context();
-    global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&cx, &mut HeaderInjector(&mut headers))
+/// Unless the caller sent us a valid W3C `traceparent`, start each request
+/// as a fresh root span. When this service is called by `otel-rust-demo`,
+/// the extracted context becomes the parent, so the whole cross-service
+/// flow shows up as one connected tree in Jaeger.
+async fn propagate_tracing(request: Request, next: Next) -> Response {
+    let parent_cx = global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(request.headers()))
     });
+    let span = info_span!("handle request");
+    let _ = span.set_parent(parent_cx);
+    next.run(request).instrument(span).await
+}
 
-    let client = reqwest::Client::new();
-    match client.get(format!("{billing_url}/charge")).headers(headers).send().await {
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            info!(status = %status, body, "downstream service responded");
-        }
-        Err(err) => warn!(%err, "downstream service unavailable"),
-    }
+/// Simulates charging a payment method: a couple of child spans so the
+/// cross-service trace has its own little tree in Jaeger.
+#[instrument]
+async fn charge() -> impl IntoResponse {
+    info!("starting charge");
+    verify_card().await;
+    process_payment().await;
+    let amount = pseudo_random_range(10, 500);
+    info!(amount, "charge complete");
+    (StatusCode::OK, format!("charged {amount}.00"))
 }
 
 #[instrument]
-async fn force_error() -> impl IntoResponse {
-    warn!("simulating an internal error");
-    (StatusCode::INTERNAL_SERVER_ERROR, "simulated failure")
+async fn verify_card() {
+    tokio::time::sleep(Duration::from_millis(pseudo_random_range(5, 30))).await;
 }
 
-/// Tiny dependency-free "random" number in `[min, max]`, good enough for
-/// varying simulated latency/results in this demo. Not for real use.
+#[instrument]
+async fn process_payment() {
+    tokio::time::sleep(Duration::from_millis(pseudo_random_range(10, 80))).await;
+}
+
 fn pseudo_random_range(min: u64, max: u64) -> u64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

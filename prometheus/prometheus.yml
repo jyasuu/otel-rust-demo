@@ -6,3 +6,8 @@ scrape_configs:
     static_configs:
       - targets: ["app:8080"]
     metrics_path: /metrics
+
+  - job_name: "billing-service"
+    static_configs:
+      - targets: ["billing-service:8081"]
+    metrics_path: /metrics

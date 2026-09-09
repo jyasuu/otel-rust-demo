@@ -6,6 +6,19 @@ services:
       - "8080:8080"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - BILLING_SERVICE_URL=http://billing-service:8081
+      - RUST_LOG=info
+    depends_on:
+      - otel-collector
+      - billing-service
+
+  billing-service:
+    build: ./service-b
+    container_name: billing-service
+    ports:
+      - "8081:8081"
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - RUST_LOG=info
     depends_on:
       - otel-collector
@@ -39,6 +52,7 @@ services:
       - "9090:9090"
     depends_on:
       - app
+      - billing-service
 
   grafana:
     image: grafana/grafana:latest

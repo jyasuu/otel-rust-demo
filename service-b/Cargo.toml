@@ -1,13 +1,16 @@
 [package]
-name = "otel-rust-demo"
+name = "billing-service"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "billing-service"
+path = "src/main.rs"
 
 [dependencies]
 # Web framework
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.7", features = ["trace"] }
 
 # Structured logging / tracing
 tracing = "0.1"
@@ -25,8 +28,7 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 opentelemetry-prometheus = "0.32"
 prometheus = "0.14"
 
-# Outbound HTTP to the downstream (billing) service + W3C trace propagation
-reqwest = "0.12"
+# W3C trace context extraction from incoming headers
 opentelemetry-http = "0.32"
 
 anyhow = "1"
