@@ -13,6 +13,7 @@ use axum::{
     Router,
 };
 use opentelemetry::{
+    baggage::{Baggage, BaggageExt as _},
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
@@ -278,10 +279,16 @@ async fn call_downstream_service() {
     let billing_url = std::env::var("BILLING_SERVICE_URL")
         .unwrap_or_else(|_| "http://localhost:8081".to_string());
 
-    // Inject the current span's trace context into the outgoing request so
-    // billing-service continues the same trace (visible as one tree in Jaeger).
+    // Inject the current span's trace context so billing-service continues
+    // the same trace (visible as one tree in Jaeger). We also attach a
+    // `user.id` baggage item, which the BaggagePropagator carries over the
+    // hop in a `baggage` header.
     let mut headers = HeaderMap::new();
-    let cx = tracing::Span::current().context();
+    let mut baggage = Baggage::new();
+    let _ = baggage.insert("user.id", format!("user-{}", pseudo_random_range(1, 9999)));
+    let cx = tracing::Span::current()
+        .context()
+        .with_baggage(baggage);
     global::get_text_map_propagator(|propagator| {
         propagator.inject_context(&cx, &mut HeaderInjector(&mut headers))
     });

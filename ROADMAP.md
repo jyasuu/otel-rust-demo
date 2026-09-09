@@ -45,12 +45,16 @@ Legend: `[x]` = done, `[ ]` = not started.
 
 ## Intermediate
 
-- [ ] **4. Baggage propagation**
+- [x] **4. Baggage propagation**
   30min
-  Attach e.g. `user.id` to the current context in `otel-rust-demo`, let the
-  (already configured) `BaggagePropagator` carry it over the `/charge` call,
-  and read it back in `billing-service` to set a span attribute. Jaeger should
-  show the value jumping the service boundary.
+  Done: `otel-rust-demo` attaches `user.id` (`user-` + random suffix) to the
+  context before the `/charge` call; the already-configured
+  `BaggagePropagator` carries it in a `baggage` header, and `billing-service`
+  reads `BaggageExt::baggage().get("user.id")` to set the `user.id` span
+  attribute. Jaeger shows the value jumping the service boundary (see
+  `docs/screenshots/jaeger-baggage.png`). Note: `BaggagePropagator` must be
+  registered in `TextMapCompositePropagator` on the auto-injecting side —
+  `global::set_text_map_propagator` defaults to a no-op.
 - [ ] **5. Sampling that keeps cross-service traces complete**
   45min
   Add a `tail_sampling` processor to the collector with a policy that keeps

@@ -13,11 +13,12 @@ use axum::{
     Router,
 };
 use opentelemetry::{
+    baggage::BaggageExt as _,
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
     propagation::TextMapCompositePropagator,
     trace::TracerProvider as _,
-    KeyValue,
+    KeyValue, StringValue,
 };
 use opentelemetry_http::{HeaderExtractor, HeaderInjector};
 use opentelemetry_otlp::WithExportConfig;
@@ -228,12 +229,18 @@ async fn health() -> &'static str {
 /// Unless the caller sent us a valid W3C `traceparent`, start each request
 /// as a fresh root span. When this service is called by `otel-rust-demo`,
 /// the extracted context becomes the parent, so the whole cross-service
-/// flow shows up as one connected tree in Jaeger.
+/// flow shows up as one connected tree in Jaeger. Any `baggage` items the
+/// caller attached (e.g. `user.id`) land on the span as attributes.
 async fn propagate_tracing(request: Request, next: Next) -> Response {
     let parent_cx = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
     });
-    let span = info_span!("handle request");
+    let user_id = parent_cx
+        .baggage()
+        .get("user.id")
+        .map(StringValue::as_str)
+        .unwrap_or("unknown");
+    let span = info_span!("handle request", user.id = user_id);
     let _ = span.set_parent(parent_cx);
     next.run(request).instrument(span).await
 }

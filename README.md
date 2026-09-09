@@ -41,7 +41,10 @@ payment-gateway ─────────────► otel-collector (trace
   `billing-service/charge` (`verify_card`, `process_payment`), which calls
   `payment-gateway/process` (`authorize`, `capture`). The W3C trace context
   is injected at every hop, so Jaeger shows the **whole cross-service trace
-  as one tree** across three microservices.
+  as one tree** across three microservices. Besides the trace context,
+  `otel-rust-demo` also sends a **`user.id` baggage item** on each `/charge`
+  call; `billing-service` reads it back and records it as a `user.id` span
+  attribute, so that value is visible crossing the service boundary in Jaeger.
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus
@@ -100,6 +103,7 @@ Captured against a running stack (see `docs/screenshots/`):
 | View | Screenshot |
 |------|------------|
 | Jaeger — 3-hop trace across all three services | `docs/screenshots/jaeger-3-hop-trace.png` |
+| Jaeger — `user.id` baggage carried across the app → billing hop | `docs/screenshots/jaeger-baggage.png` |
 | Jaeger — cross-service trace (app + billing) | `docs/screenshots/jaeger-cross-service.png` |
 | Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
 | Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |
