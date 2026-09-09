@@ -241,7 +241,13 @@ async fn propagate_tracing(request: Request, next: Next) -> Response {
         .get("user.id")
         .map(StringValue::as_str)
         .unwrap_or("unknown");
-    let span = info_span!("handle request", user.id = user_id);
+    let route = request.uri().path();
+    let client = request
+        .headers()
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown");
+    let span = info_span!("handle request", user.id = user_id, route, client);
     let _ = span.set_parent(parent_cx);
     next.run(request).instrument(span).await
 }

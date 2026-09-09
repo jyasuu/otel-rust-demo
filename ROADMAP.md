@@ -41,11 +41,14 @@ Legend: `[x]` = done, `[ ]` = not started.
   Jaeger with the reason at a glance (see
   `docs/screenshots/jaeger-error-span.png`). The collector maps OTLP ERROR
   status to Jaeger's `error=true` tag.
-- [ ] **3. Request correlation tags**
+- [x] **3. Request correlation tags**
   15min · beginner
-  Add a `route`/`client` tag derived from the request to every span (e.g. via
-  `tower_http::trace::TraceLayer::make_span_with`) and confirm it shows as a
-  tag on the Jaeger trace.
+  Done: a custom `MakeSpan` on the app's `TraceLayer` creates the per-request
+  span at INFO level (the default is DEBUG, which the `info` `EnvFilter`
+  silently drops) and records `method`/`route`/`client` User-Agent fields;
+  `billing-service` mirrors `route`/`client` on its `handle request` span. See
+  `docs/screenshots/jaeger-request-tags.png`. Note: tracing → OTel attribute
+  conversion picks up plain span fields automatically.
 
 ## Intermediate
 

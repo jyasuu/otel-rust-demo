@@ -31,8 +31,8 @@ use opentelemetry_sdk::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
-use tracing::{info, instrument, warn};
+use tower_http::trace::{MakeSpan, TraceLayer};
+use tracing::{info, instrument, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -45,6 +45,30 @@ struct AppState {
     http_requests_total: Counter<u64>,
     http_request_duration: Histogram<f64>,
     http_requests_in_flight: UpDownCounter<i64>,
+}
+
+/// Custom `MakeSpan` for `TraceLayer`: creates the per-request tracing span at
+/// INFO level (so `EnvFilter`'s default `info` doesn't cut it) and records the
+/// route + the calling client's User-Agent as fields. `tracing-opentelemetry`
+/// turns those fields into span attributes, so they show up as tags in Jaeger.
+#[derive(Clone, Copy)]
+struct RequestSpan;
+
+impl<B> MakeSpan<B> for RequestSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> Span {
+        let client = request
+            .headers()
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown");
+        tracing::span!(
+            tracing::Level::INFO,
+            "request",
+            method = %request.method(),
+            route = %request.uri().path(),
+            client
+        )
+    }
 }
 
 fn build_resource() -> Resource {
@@ -176,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/error", get(force_error))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(RequestSpan))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
         .with_state(state);
 

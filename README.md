@@ -47,7 +47,9 @@ payment-gateway ─────────────► otel-collector (trace
   attribute, so that value is visible crossing the service boundary in Jaeger.
   Failure endpoints (`/error`) additionally set `SpanStatus::Error` with
   standard `exception.type`/`exception.message` attributes, so broken requests
-  show up red in Jaeger complete with the reason.
+  show up red in Jaeger complete with the reason. Every request also carries
+  `method`/`route`/`client` (User-Agent) tags from a custom `TraceLayer`
+  `MakeSpan`, making it easy to filter traces "by client" in Jaeger.
 - **Metrics**: each service uses the OpenTelemetry Metrics API
   (`Counter`, `Histogram`, `UpDownCounter`) backed by the
   `opentelemetry-prometheus` bridge, and exposes them in plain Prometheus
@@ -109,6 +111,7 @@ Captured against a running stack (see `docs/screenshots/`):
 | Jaeger — 3-hop trace across all three services | `docs/screenshots/jaeger-3-hop-trace.png` |
 | Jaeger — `user.id` baggage carried across the app → billing hop | `docs/screenshots/jaeger-baggage.png` |
 | Jaeger — error span from `/error` (`error=true`, `exception.type`, `otel.status_code=ERROR`) | `docs/screenshots/jaeger-error-span.png` |
+| Jaeger — `request` root span with `route`/`client` tags, whole 3-service tree | `docs/screenshots/jaeger-request-tags.png` |
 | Jaeger — cross-service trace (app + billing) | `docs/screenshots/jaeger-cross-service.png` |
 | Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
 | Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |
