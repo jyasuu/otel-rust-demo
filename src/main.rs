@@ -98,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     let meter = meter_provider.meter(SERVICE_NAME);
 
     let http_requests_total = meter
-        .u64_counter("http_requests_total")
+        .u64_counter("http_requests")
         .with_description("Total number of HTTP requests received")
         .build();
     let http_request_duration = meter

@@ -58,6 +58,17 @@ Then:
 - **Grafana** → http://localhost:3000 (anonymous admin access is enabled for
   this demo — the "otel-rust-demo" dashboard is already provisioned)
 
+## Screenshots
+
+Captured against a running stack (see `docs/screenshots/`):
+
+| View | Screenshot |
+|------|------------|
+| Jaeger — trace search results | `docs/screenshots/jaeger-trace-list.png` |
+| Jaeger — waterfall view of one `/work` trace | `docs/screenshots/jaeger-trace-detail.png` |
+| Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
+| Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |
+
 ## Running the app locally (without Docker)
 
 You'll still want Jaeger/Prometheus/Grafana up via Compose, but you can run
@@ -75,12 +86,11 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run
   `opentelemetry-otlp`/`opentelemetry-prometheus` all on `0.32.x`,
   `tracing-opentelemetry` on `0.33`) — these version families move fast and
   aren't always in lockstep, so if you bump one, check the others.
-- This was written and version-checked against the crates' published
-  source/docs, but not compiled in a live sandbox (no local Rust toolchain
-  here). Run `cargo build` first — if you hit a small API drift (a renamed
-  builder method, etc.) the compiler error will point straight at it, and
-  `cargo add opentelemetry@^0.32 --dry-run` (etc.) can confirm current
-  versions.
+- The Dockerfile requires a recent Rust toolchain (`rust:1.97`) because the
+  current dependency tree (e.g. `hashbrown 0.17`) needs `edition2024`.
+- The `opentelemetry-prometheus` bridge appends `_total` to counter names,
+  so a counter instrumented as `http_requests` is exported to Prometheus as
+  `http_requests_total`.
 - No traces showing up in Jaeger? Check `docker compose logs otel-collector`
   — the collector's `debug` exporter logs every span it receives, which is
   the fastest way to tell "app → collector" from "collector → jaeger".
