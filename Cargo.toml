@@ -1,0 +1,28 @@
+[package]
+name = "otel-rust-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.7", features = ["trace"] }
+
+# Structured logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.33"
+
+# OpenTelemetry core + SDK
+opentelemetry = { version = "0.32", features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics"] }
+
+# Traces -> OTLP/gRPC -> OTel Collector -> Jaeger
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+
+# Metrics -> exposed as /metrics -> scraped by Prometheus
+opentelemetry-prometheus = "0.32"
+prometheus = "0.14"
+
+anyhow = "1"
