@@ -22,6 +22,7 @@ use opentelemetry::{
 use opentelemetry_http::HeaderInjector;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
+    logs::SdkLoggerProvider,
     metrics::SdkMeterProvider,
     propagation::{BaggagePropagator, TraceContextPropagator},
     trace::SdkTracerProvider,
@@ -72,6 +73,26 @@ fn init_tracer_provider(resource: Resource) -> anyhow::Result<SdkTracerProvider>
     Ok(provider)
 }
 
+/// Wire up an OTLP/gRPC log exporter pointing at the same OTel Collector and
+/// wrap it in a batching logger provider. `tracing` events are bridged into
+/// it via `opentelemetry-appender-tracing`.
+fn init_logger_provider(resource: Resource) -> anyhow::Result<SdkLoggerProvider> {
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    let exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+
+    let provider = SdkLoggerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    Ok(provider)
+}
+
 /// Wire up a Prometheus exporter as an OpenTelemetry metrics reader. This
 /// gives us a standard OTel `Meter` API in the app, while metrics are
 /// exposed in plain Prometheus text format at `/metrics` for scraping.
@@ -109,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     // --- Metrics ----------------------------------------------------------
-    let (meter_provider, prometheus_registry) = init_meter_provider(resource)?;
+    let (meter_provider, prometheus_registry) = init_meter_provider(resource.clone())?;
     global::set_meter_provider(meter_provider.clone());
     let meter = meter_provider.meter(SERVICE_NAME);
 
@@ -126,11 +147,18 @@ async fn main() -> anyhow::Result<()> {
         .with_description("Number of HTTP requests currently being handled")
         .build();
 
+    // --- Logs -----------------------------------------------------------
+    let logger_provider = init_logger_provider(resource.clone())?;
+    let log_layer = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+        &logger_provider,
+    );
+
     // --- tracing subscriber: pretty console logs + OTel export ----------
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
+        .with(log_layer)
         .with(otel_layer)
         .init();
 
@@ -159,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
     // Flush any buffered spans/metrics before exiting.
     let _ = tracer_provider.shutdown();
     let _ = meter_provider.shutdown();
+    let _ = logger_provider.shutdown();
 
     Ok(())
 }

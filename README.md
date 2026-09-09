@@ -8,6 +8,9 @@ up to a full local observability stack: **Jaeger** (traces), **Prometheus**
   performs nested work and then calls the billing service down the line.
 - `billing-service` (port 8081) — the downstream payment service.
 
+Want to use this as a learning lab? See [`ROADMAP.md`](./ROADMAP.md) for a
+curated set of practice exercises (logs, sampling, gRPC, and more).
+
 ## Architecture
 
 ```
@@ -40,6 +43,11 @@ billing-service ─────────────► otel-collector (trace
 - **Grafana** is pre-provisioned with both a Prometheus and a Jaeger
   datasource, plus a starter dashboard (request rate, error rate, p95
   latency, in-flight requests) that distinguishes the two services.
+- **Logs**: both services bridge `tracing` events into an OTLP log exporter
+  (`opentelemetry-appender-tracing`), which the collector receives on its
+  `logs` pipeline. The legacy Jaeger `all-in-one` image cannot ingest OTLP
+  logs, so they're printed by the collector's `debug` exporter — watch them
+  with `docker compose logs -f otel-collector`.
 
 ## Endpoints
 
@@ -115,7 +123,6 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run
 - No traces showing up in Jaeger? Check `docker compose logs otel-collector`
   — the collector's `debug` exporter logs every span it receives, which is
   the fastest way to tell "app → collector" from "collector → jaeger".
-- Want logs in the pipeline too (not just traces/metrics)? Add the `logs`
-  feature to `opentelemetry_sdk`/`opentelemetry-otlp` and wire up
-  `opentelemetry-appender-tracing` — left out here to keep the example
-  focused.
+- Want logs in the pipeline too (not just traces/metrics)? Done — see the
+  **Logs** bullet under Architecture; `ROADMAP.md` has more practice
+  exercises to build on top of it.

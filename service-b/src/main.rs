@@ -22,6 +22,7 @@ use opentelemetry::{
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
+    logs::SdkLoggerProvider,
     metrics::SdkMeterProvider,
     propagation::{BaggagePropagator, TraceContextPropagator},
     trace::SdkTracerProvider,
@@ -68,6 +69,23 @@ fn init_tracer_provider(resource: Resource) -> anyhow::Result<SdkTracerProvider>
     Ok(provider)
 }
 
+fn init_logger_provider(resource: Resource) -> anyhow::Result<SdkLoggerProvider> {
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    let exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+
+    let provider = SdkLoggerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    Ok(provider)
+}
+
 fn init_meter_provider(resource: Resource) -> anyhow::Result<(SdkMeterProvider, Registry)> {
     let registry = Registry::new();
 
@@ -99,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
     let tracer = tracer_provider.tracer(SERVICE_NAME);
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let (meter_provider, prometheus_registry) = init_meter_provider(resource)?;
+    let (meter_provider, prometheus_registry) = init_meter_provider(resource.clone())?;
     global::set_meter_provider(meter_provider.clone());
     let meter = meter_provider.meter(SERVICE_NAME);
 
@@ -116,10 +134,17 @@ async fn main() -> anyhow::Result<()> {
         .with_description("Number of HTTP requests currently being handled")
         .build();
 
+    // --- Logs -----------------------------------------------------------
+    let logger_provider = init_logger_provider(resource.clone())?;
+    let log_layer = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+        &logger_provider,
+    );
+
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
+        .with(log_layer)
         .with(otel_layer)
         .init();
 
@@ -145,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = tracer_provider.shutdown();
     let _ = meter_provider.shutdown();
+    let _ = logger_provider.shutdown();
 
     Ok(())
 }

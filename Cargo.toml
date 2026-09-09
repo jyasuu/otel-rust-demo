@@ -13,13 +13,14 @@ tower-http = { version = "0.7", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.33"
+opentelemetry-appender-tracing = "0.32"
 
 # OpenTelemetry core + SDK
 opentelemetry = { version = "0.32", features = ["trace"] }
-opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics", "logs"] }
 
-# Traces -> OTLP/gRPC -> OTel Collector -> Jaeger
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+# Traces + logs -> OTLP/gRPC -> OTel Collector -> Jaeger
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
 
 # Metrics -> exposed as /metrics -> scraped by Prometheus
 opentelemetry-prometheus = "0.32"
