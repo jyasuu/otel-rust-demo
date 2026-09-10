@@ -3,6 +3,10 @@ name = "otel-rust-demo"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["billing-proto", "service-b", "payment-gateway"]
+resolver = "2"
+
 [dependencies]
 # Web framework
 axum = "0.8"
@@ -26,8 +30,8 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 opentelemetry-prometheus = "0.32"
 prometheus = "0.14"
 
-# Outbound HTTP to the downstream (billing) service + W3C trace propagation
-reqwest = "0.12"
-opentelemetry-http = "0.32"
+# Outbound gRPC to the billing service + OTel context via gRPC metadata
+tonic = "0.14"
+billing-proto = { path = "billing-proto" }
 
 anyhow = "1"

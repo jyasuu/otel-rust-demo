@@ -12,11 +12,15 @@ use axum::{
     routing::get,
     Router,
 };
+use billing_proto::billing::{
+    billing_server::{Billing, BillingServer},
+    ChargeRequest, ChargeResponse,
+};
 use opentelemetry::{
     baggage::BaggageExt as _,
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
-    propagation::TextMapCompositePropagator,
+    propagation::{Extractor, TextMapCompositePropagator},
     trace::{Status, TraceContextExt as _, TracerProvider as _},
     KeyValue, StringValue,
 };
@@ -31,6 +35,12 @@ use opentelemetry_sdk::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
+use tonic::{
+    async_trait,
+    metadata::{KeyRef, MetadataMap},
+    transport::Server,
+    Request as TonicRequest, Response as TonicResponse, Status as TonicStatus,
+};
 use tracing::{info, info_span, instrument, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -157,7 +167,6 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/charge", get(charge))
         .route("/error", get(force_error))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler))
@@ -167,7 +176,22 @@ async fn main() -> anyhow::Result<()> {
 
     let addr: SocketAddr = "0.0.0.0:8081".parse()?;
     let listener = TcpListener::bind(addr).await?;
-    info!(%addr, "listening");
+    info!(%addr, "http listening");
+
+    // gRPC endpoint where `otel-rust-demo` sends its charge requests (the
+    // replacement for the old HTTP /charge route).
+    let grpc_addr: SocketAddr = "0.0.0.0:50051".parse()?;
+    tokio::spawn(async move {
+        let result = Server::builder()
+            .add_service(BillingServer::new(BillingService))
+            .serve(grpc_addr)
+            .await;
+        if let Err(err) = result {
+            tracing::error!(%err, "gRPC server error");
+        }
+    });
+    info!(%grpc_addr, "grpc listening");
+
     axum::serve(listener, app).await?;
 
     let _ = tracer_provider.shutdown();
@@ -252,17 +276,73 @@ async fn propagate_tracing(request: Request, next: Next) -> Response {
     next.run(request).instrument(span).await
 }
 
-/// Simulates charging a payment method: a couple of child spans so the
-/// cross-service trace has its own little tree in Jaeger.
-#[instrument]
-async fn charge() -> impl IntoResponse {
-    info!("starting charge");
-    verify_card().await;
-    process_payment().await;
-    let amount = pseudo_random_range(10, 500);
-    info!(amount, "charge complete");
-    log_with_trace_context("charge finished");
-    (StatusCode::OK, format!("charged {amount}.00"))
+/// Adapter letting the OTel W3C propagator read trace/baggage context from
+/// tonic's gRPC metadata map (instead of HTTP headers).
+struct GrpcMetadataExtractor<'a>(&'a MetadataMap);
+
+impl<'a> Extractor for GrpcMetadataExtractor<'a> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|value| value.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0
+            .keys()
+            .map(|key| match key {
+                KeyRef::Ascii(v) => v.as_str(),
+                KeyRef::Binary(v) => v.as_str(),
+            })
+            .collect()
+    }
+}
+
+/// gRPC implementation of the `Billing` service, replacing the old HTTP
+/// `/charge` route. `charge` extracts the caller's trace + baggage context
+/// from the gRPC metadata and wraps the work (the billing -> payment-gateway
+/// hop is still HTTP) in a `handle request` span, so the cross-service trace
+/// in Jaeger keeps the same shape it had over HTTP.
+#[derive(Clone, Default)]
+struct BillingService;
+
+#[async_trait]
+impl Billing for BillingService {
+    async fn charge(
+        &self,
+        request: TonicRequest<ChargeRequest>,
+    ) -> Result<TonicResponse<ChargeResponse>, TonicStatus> {
+        let parent_cx = global::get_text_map_propagator(|propagator| {
+            propagator.extract(&GrpcMetadataExtractor(request.metadata()))
+        });
+        let user_id = parent_cx
+            .baggage()
+            .get("user.id")
+            .map(StringValue::as_str)
+            .unwrap_or("unknown");
+        let span = info_span!(
+            "handle request",
+            user.id = user_id,
+            route = "billing.Billing/Charge",
+            client = "otel-rust-demo",
+        );
+        let _ = span.set_parent(parent_cx);
+
+        let amount_cents = request.get_ref().amount_cents;
+        async {
+            info!("starting gRPC charge");
+            verify_card().await;
+            process_payment().await;
+            let transaction_id = format!("tx-{}", pseudo_random_range(100_000, 999_999));
+            info!(transaction_id, amount_cents, "charge complete");
+            log_with_trace_context("charge finished");
+            Ok(TonicResponse::new(ChargeResponse {
+                transaction_id,
+                amount_cents,
+                status: "succeeded".to_string(),
+            }))
+        }
+        .instrument(span)
+        .await
+    }
 }
 
 /// Emit an INFO log record that explicitly includes the current span's

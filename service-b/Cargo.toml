@@ -32,6 +32,10 @@ prometheus = "0.14"
 # W3C trace context extraction from incoming headers
 opentelemetry-http = "0.32"
 
+# gRPC server (billing.proto stubs) — receives OTel context via metadata
+tonic = "0.14"
+billing-proto = { path = "../billing-proto" }
+
 # Outbound HTTP to the payment gateway
 reqwest = "0.12"
 

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package billing;
+
+// The billing service accepts a charge request over gRPC. The main app talks
+// to this instead of the old HTTP /charge endpoint; OTel context travels in
+// gRPC metadata rather than HTTP headers.
+service Billing {
+  rpc Charge(ChargeRequest) returns (ChargeResponse);
+}
+
+message ChargeRequest {
+  int64 amount_cents = 1;
+  string currency = 2;
+}
+
+message ChargeResponse {
+  string transaction_id = 1;
+  string status = 2;
+  int64 amount_cents = 3;
+}

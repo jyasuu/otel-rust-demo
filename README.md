@@ -5,9 +5,9 @@ wired up to a full local observability stack: **Jaeger** (traces),
 **Prometheus** (metrics), and **Grafana** (dashboards over both).
 
 - `otel-rust-demo` (port 8080) — the "frontend" service; its `/work` endpoint
-  performs nested work and then calls the billing service down the line.
-- `billing-service` (port 8081) — the downstream payment service; `/charge`
-  calls the payment gateway.
+  performs nested work and then calls the billing service over **gRPC**.
+- `billing-service` (ports 8081 HTTP, 50051 gRPC) — the downstream payment
+  service; its gRPC `Billing/Charge` RPC calls the payment gateway over HTTP.
 - `payment-gateway` (port 8082) — the external payment processor, at the end
   of the chain.
 
@@ -20,7 +20,7 @@ curated set of practice exercises (logs, sampling, gRPC, and more).
         traces (OTLP/gRPC)
 axum app ───────────────────► otel-collector ───────────────► jaeger (UI: 16686)
    │  ▲
-   │  │ HTTP /charge (W3C trace context propagated)
+   │  │ gRPC billing.Billing/Charge (context via gRPC metadata)
    │  ▼
 billing-service ─────────────► otel-collector (traces)
    │  ▲
@@ -29,21 +29,25 @@ billing-service ─────────────► otel-collector (trace
 payment-gateway ─────────────► otel-collector (traces)
    │
    └── /metrics (Prometheus text) ◄────── prometheus (scrapes every 5s) ◄── grafana (3000)
-                                                     │
-                                                     └────────────────────────┘
-                                           (grafana also queries jaeger directly)
+                                                      │
+                                                      └────────────────────────┘
+                                            (grafana also queries jaeger directly)
 ```
 
 - **Traces**: all three services export spans over OTLP/gRPC to an
   OpenTelemetry Collector, which forwards them on to Jaeger. Each HTTP
   request becomes a root span; `/work` fans out into child spans
-  (`validate_input`, `query_database`, `call_downstream_service`), calls
-  `billing-service/charge` (`verify_card`, `process_payment`), which calls
-  `payment-gateway/process` (`authorize`, `capture`). The W3C trace context
-  is injected at every hop, so Jaeger shows the **whole cross-service trace
-  as one tree** across three microservices. Besides the trace context,
-  `otel-rust-demo` also sends a **`user.id` baggage item** on each `/charge`
-  call; `billing-service` reads it back and records it as a `user.id` span
+  (`validate_input`, `query_database`, `call_downstream_service`), calls the
+  billing service's gRPC `Billing/Charge` RPC (`verify_card`,
+  `process_payment`), which calls `payment-gateway/process` (`authorize`,
+  `capture`). The app→billing hop uses a tonic **client interceptor** that
+  injects the W3C trace context into the gRPC **metadata**; `billing-service`
+  re-parents its `handle request` span from that metadata, and the
+  billing→gateway hop is plain HTTP with W3C headers. Either way, Jaeger
+  shows the **whole cross-service trace as one tree** across three
+  microservices. Besides the trace context, `otel-rust-demo` also sends a
+  **`user.id` baggage item** in the gRPC metadata on each `Charge` call;
+  `billing-service` reads it back and records it as a `user.id` span
   attribute, so that value is visible crossing the service boundary in Jaeger.
   Failure endpoints (`/error`) additionally set `SpanStatus::Error` with
   standard `exception.type`/`exception.message` attributes, so broken requests
@@ -81,11 +85,12 @@ payment-gateway ─────────────► otel-collector (trace
 | Service          | Path        | What it does                                              |
 |------------------|-------------|------------------------------------------------------------|
 | `otel-rust-demo` | `GET /`       | Trivial handler, one span                                 |
-| `otel-rust-demo` | `GET /work`   | Multi-step work + a real downstream HTTP call to billing  |
+| `otel-rust-demo` | `GET /work`   | Multi-step work + a real downstream gRPC call to billing |
 | `otel-rust-demo` | `GET /error`  | Always returns 500; marks the span ERROR with `exception.*` attributes |
 | `otel-rust-demo` | `GET /health` | Plain liveness check                                       |
 | `otel-rust-demo` | `GET /metrics`| Prometheus scrape endpoint                                |
-| `billing-service`| `GET /charge` | Simulated payment, nested spans — continues the trace     |
+| `billing-service`| `Billing/Charge` (gRPC, port 50051) | Simulated payment, nested spans — continues the trace (OTel context in gRPC metadata) |
+| `billing-service`| `GET /error`  | Simulated declined card; marks the span ERROR (red in Jaeger) |
 | `billing-service`| `GET /error`  | Simulated declined card; marks the span ERROR (red in Jaeger) |
 | `billing-service`| `GET /health` | Plain liveness check                                       |
 | `billing-service`| `GET /metrics`| Prometheus scrape endpoint                                |
@@ -121,6 +126,7 @@ Captured against a running stack (see `docs/screenshots/`):
 | View | Screenshot |
 |------|------------|
 | Jaeger — 3-hop trace across all three services | `docs/screenshots/jaeger-3-hop-trace.png` |
+| Jaeger — gRPC app → billing hop (`route=billing.Billing/Charge`, `user.id` via metadata) | `docs/screenshots/jaeger-grpc-trace.png` |
 | Jaeger — `user.id` baggage carried across the app → billing hop | `docs/screenshots/jaeger-baggage.png` |
 | Jaeger — error span from `/error` (`error=true`, `exception.type`, `otel.status_code=ERROR`) | `docs/screenshots/jaeger-error-span.png` |
 | Jaeger — `request` root span with `route`/`client` tags, whole 3-service tree | `docs/screenshots/jaeger-request-tags.png` |
@@ -142,7 +148,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run --manifest-path paym
 # terminal 2 — billing service (defaults to PAYMENT_GATEWAY_URL=http://localhost:8082)
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run --manifest-path service-b/Cargo.toml
 
-# terminal 3 — main app (defaults to BILLING_SERVICE_URL=http://localhost:8081)
+# terminal 3 — main app (defaults to BILLING_GRPC_ENDPOINT=http://localhost:50051)
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 cargo run
 ```
 

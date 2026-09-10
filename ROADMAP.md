@@ -96,11 +96,21 @@ Legend: `[x]` = done, `[ ]` = not started.
   services in one Jaeger tree (see
   `docs/screenshots/jaeger-3-hop-trace.png`), and each hop exports its own
   spans, metrics, and logs.
-- [ ] **9. gRPC (tonic) instead of HTTP**
+- [x] **9. gRPC (tonic) instead of HTTP**
   1–1.5h
-  Replace the app→billing call with a `tonic` client/server and propagate
-  OTel context via gRPC metadata instead of HTTP headers. Note the differences
-  in instrumentation (interceptors) vs. axum middleware.
+  Done: a new `billing-proto` crate (`.proto` + `tonic-prost-build` codegen)
+  was added and the repo converted to a Cargo workspace. The app's downstream
+  call is now a tonic `BillingClient` whose interceptor injects the current
+  span's trace context + `user.id` baggage into **gRPC metadata**; `billing-service`
+  serves the `Billing` gRPC server on `:50051` alongside its axum app and
+  re-parents the `handle request` span from the extracted metadata context.
+  Key differences vs. HTTP/axum: client-side it's a `with_interceptor` hook on
+  the generated client plus a small `TextMapPropagator` (de)serialization
+  adapter over `tonic::metadata::MetadataMap` (instead of `HeaderInjector` /
+  `HeaderExtractor`), and server-side the parent context is extracted inside
+  the trait method instead of in axum middleware. Docker builders install
+  `protobuf-compiler` for the codegen step. See
+  `docs/screenshots/jaeger-grpc-trace.png`.
 - [x] **10. Collector hardening**
   45min
   Done: the collector now runs with its own diagnostics on:

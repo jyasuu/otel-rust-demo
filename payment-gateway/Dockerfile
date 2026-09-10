@@ -1,8 +1,7 @@
 FROM rust:1.97 AS builder
 WORKDIR /app
-COPY Cargo.toml ./
-COPY src ./src
-RUN cargo build --release
+COPY . .
+RUN cargo build --release -p payment-gateway
 
 FROM debian:bookworm-slim
 RUN apt-get update \

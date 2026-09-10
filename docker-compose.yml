@@ -6,17 +6,20 @@ services:
       - "8080:8080"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - BILLING_SERVICE_URL=http://billing-service:8081
+      - BILLING_GRPC_ENDPOINT=http://billing-service:50051
       - RUST_LOG=info
     depends_on:
       - otel-collector
       - billing-service
 
   billing-service:
-    build: ./service-b
+    build:
+      context: .
+      dockerfile: service-b/Dockerfile
     container_name: billing-service
     ports:
       - "8081:8081"
+      - "50051:50051" # gRPC (app -> billing)
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - PAYMENT_GATEWAY_URL=http://payment-gateway:8082
@@ -26,7 +29,9 @@ services:
       - payment-gateway
 
   payment-gateway:
-    build: ./payment-gateway
+    build:
+      context: .
+      dockerfile: payment-gateway/Dockerfile
     container_name: payment-gateway
     ports:
       - "8082:8082"

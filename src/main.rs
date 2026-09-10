@@ -1,26 +1,27 @@
 use std::{
     net::SocketAddr,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     extract::{Request, State},
-    http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
+    http::{header::CONTENT_TYPE, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use billing_proto::billing::{billing_client::BillingClient, ChargeRequest};
 use opentelemetry::{
     baggage::{Baggage, BaggageExt as _},
     global,
     metrics::{Counter, Histogram, MeterProvider as _, UpDownCounter},
-    propagation::TextMapCompositePropagator,
+    propagation::{Injector, TextMapCompositePropagator},
     trace::{Status, TraceContextExt as _, TracerProvider as _},
     KeyValue,
 };
-use opentelemetry_http::HeaderInjector;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
@@ -31,6 +32,7 @@ use opentelemetry_sdk::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
+use tonic::metadata::{MetadataKey, MetadataMap};
 use tower_http::trace::{MakeSpan, TraceLayer};
 use tracing::{info, instrument, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -68,6 +70,24 @@ impl<B> MakeSpan<B> for RequestSpan {
             route = %request.uri().path(),
             client
         )
+    }
+}
+
+/// Adapter letting the OTel W3C propagator write trace/baggage context into
+/// tonic's gRPC metadata map instead of HTTP headers. gRPC metadata is the
+/// wire transport for context on our billing RPC.
+struct GrpcMetadataInjector<'a>(&'a mut MetadataMap);
+
+impl<'a> Injector for GrpcMetadataInjector<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        // gRPC metadata only accepts ASCII keys/values; traceparent/baggage
+        // are always valid (lowercase, printable ASCII).
+        if let (Ok(key), Ok(value)) = (
+            MetadataKey::from_str(key),
+            value.parse::<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>(),
+        ) {
+            self.0.insert(key, value);
+        }
     }
 }
 
@@ -318,33 +338,61 @@ async fn query_database() -> u64 {
     pseudo_random_range(1, 100)
 }
 
-#[instrument]
-async fn call_downstream_service() {
-    let billing_url = std::env::var("BILLING_SERVICE_URL")
-        .unwrap_or_else(|_| "http://localhost:8081".to_string());
-
-    // Inject the current span's trace context so billing-service continues
-    // the same trace (visible as one tree in Jaeger). We also attach a
-    // `user.id` baggage item, which the BaggagePropagator carries over the
-    // hop in a `baggage` header.
-    let mut headers = HeaderMap::new();
+/// tonic interceptor: injects the current span's trace + baggage context into
+/// the outgoing request's gRPC metadata. Because it's passed to `with_interceptor`
+/// by name, tonic instantiates it generically for any request body type.
+fn inject_trace_context_into_grpc_metadata<B>(
+    mut request: tonic::Request<B>,
+) -> Result<tonic::Request<B>, tonic::Status> {
     let mut baggage = Baggage::new();
     let _ = baggage.insert("user.id", format!("user-{}", pseudo_random_range(1, 9999)));
     let cx = tracing::Span::current()
         .context()
         .with_baggage(baggage);
     global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&cx, &mut HeaderInjector(&mut headers))
+        propagator.inject_context(&cx, &mut GrpcMetadataInjector(request.metadata_mut()))
     });
+    Ok(request)
+}
 
-    let client = reqwest::Client::new();
-    match client.get(format!("{billing_url}/charge")).headers(headers).send().await {
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            info!(status = %status, body, "downstream service responded");
+#[instrument]
+async fn call_downstream_service() {
+    let endpoint = std::env::var("BILLING_GRPC_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:50051".to_string());
+
+    // Lazy connection: the channel dials on first use, so billing-service
+    // does not need to be up when the app starts.
+    let channel = match tonic::transport::Channel::from_shared(endpoint)
+        .map(|endpoint| endpoint.connect_lazy())
+    {
+        Ok(channel) => channel,
+        Err(err) => {
+            warn!(%err, "invalid billing gRPC endpoint");
+            return;
         }
-        Err(err) => warn!(%err, "downstream service unavailable"),
+    };
+
+    let mut client =
+        BillingClient::with_interceptor(channel, inject_trace_context_into_grpc_metadata);
+
+    let amount_cents = pseudo_random_range(500, 9999) as i64;
+    match client
+        .charge(ChargeRequest {
+            amount_cents,
+            currency: "usd".to_string(),
+        })
+        .await
+    {
+        Ok(response) => {
+            let charge = response.into_inner();
+            info!(
+                transaction_id = %charge.transaction_id,
+                status = %charge.status,
+                amount_cents = charge.amount_cents,
+                "downstream gRPC billing responded"
+            );
+        }
+        Err(err) => warn!(%err, "downstream gRPC billing unavailable"),
     }
 }
 
