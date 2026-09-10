@@ -1,0 +1,66 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: otel-rust-demo
+    folder: otel-rust-demo
+    interval: 1m
+    rules:
+      - uid: demo-high-error-rate
+        title: High 5xx error rate
+        condition: C
+        data:
+          # A: fraction of HTTP requests that ended in a 5xx, per service,
+          # over the last 5 minutes (0..1).
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              expr: |-
+                (
+                  sum(rate(http_requests_total{status=~"5.."}[5m])) by (otel_scope_name)
+                )
+                /
+                clamp_min(
+                  sum(rate(http_requests_total[5m])) by (otel_scope_name),
+                  1e-9
+                )
+              instant: true
+              refId: A
+          # B: collapse each service's series to a single value.
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          # C: fire when that error fraction exceeds 5%.
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0.05
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+        for: 1m
+        labels:
+          severity: warning
+          app: otel-rust-demo
+        annotations:
+          summary: "{{ $labels.otel_scope_name }} is returning 5xx responses"
+          description: "Error rate is above threshold; check the /error traces in Jaeger (http://localhost:3000/explore)."
+        noDataState: NoData
+        execErrState: Error

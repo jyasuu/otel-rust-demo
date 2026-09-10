@@ -3,11 +3,33 @@
   "uid": "otel-rust-demo",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
     "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(http_requests_total, otel_scope_name)",
+          "refId": "A"
+        },
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 1,
+        "refresh": 2,
+        "hide": 0
+      }
+    ]
   },
   "panels": [
     {
@@ -22,15 +44,26 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Open in Jaeger",
+              "url": "http://localhost:16686/search?service=${__field.labels.otel_scope_name}&operation=${__field.labels.path}&lookback=15m",
+              "targetBlank": true
+            }
+          ]
+        }
       },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total[1m])) by (path)",
+          "expr": "sum(rate(http_requests_total{otel_scope_name=~\"$service\"}[1m])) by (path, otel_scope_name)",
           "legendFormat": "{{otel_scope_name}} {{path}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           }
         }
       ]
@@ -47,15 +80,26 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Open in Jaeger",
+              "url": "http://localhost:16686/search?service=${__field.labels.otel_scope_name}&operation=${__field.labels.path}&lookback=15m",
+              "targetBlank": true
+            }
+          ]
+        }
       },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (path)",
+          "expr": "sum(rate(http_requests_total{otel_scope_name=~\"$service\",status=~\"5..\"}[1m])) by (path, otel_scope_name)",
           "legendFormat": "{{otel_scope_name}} {{path}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           }
         }
       ]
@@ -72,15 +116,26 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Open in Jaeger",
+              "url": "http://localhost:16686/search?service=${__field.labels.otel_scope_name}&operation=${__field.labels.path}&lookback=15m",
+              "targetBlank": true
+            }
+          ]
+        }
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{otel_scope_name=~\"$service\"}[5m])) by (le, path, otel_scope_name))",
           "legendFormat": "{{otel_scope_name}} {{path}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           }
         }
       ]
@@ -97,15 +152,26 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Open in Jaeger",
+              "url": "http://localhost:16686/search?service=${__field.labels.otel_scope_name}&lookback=15m",
+              "targetBlank": true
+            }
+          ]
+        }
       },
       "targets": [
         {
-          "expr": "http_requests_in_flight",
+          "expr": "http_requests_in_flight{otel_scope_name=~\"$service\"}",
           "legendFormat": "{{otel_scope_name}} in-flight",
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           }
         }
       ]

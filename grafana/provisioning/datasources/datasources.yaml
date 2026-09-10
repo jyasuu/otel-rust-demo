@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -9,7 +10,24 @@ datasources:
     editable: true
 
   - name: Jaeger
+    uid: jaeger
     type: jaeger
     access: proxy
     url: http://jaeger:16686
     editable: true
+    # "Trace to metrics": from a span in a Jaeger trace, jump straight to the
+    # Prometheus metric series for the same service/route. Span `route` tags
+    # (and the Jaeger service name) are interpolated into the query via
+    # `$__tags.*` variables.
+    jsonData:
+      traceToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - service.name
+          - route
+        queries:
+          - query: 'http_requests_total{otel_scope_name="$__tags.service.name", path="$__tags.route"}'
+            queryType: traceToMetrics
+        filterByTraceID: true
+        spanStartTimeShift: -1h
+        spanEndTimeShift: 1h

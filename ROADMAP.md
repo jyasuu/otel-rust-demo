@@ -125,10 +125,40 @@ Legend: `[x]` = done, `[ ]` = not started.
     `idle_ns`, `thread.*`) before export.
   Verified: pprof 200; collector target `up` in Prometheus; 0 `/metrics` spans
   in Jaeger from all three services; fresh traces carry no `code.*`/`thread.*`.
-- [ ] **11. Alerting + dashboard polish**
-  1h
-  Add Grafana alert rules (e.g. error rate > threshold), a service variable
-  dropdown, and trace-to-metrics links from metric panels to Jaeger.
+- [x] **11. Alerting + dashboard polish**
+  2h
+  - Dashboard `otel-rust-demo` is provisioned as JSON
+    (`grafana/dashboards/otel-rust-demo.json`): a `service` template variable
+    (`label_values(http_requests_total, otel_scope_name)`, include-all + regex),
+    every panel filtered with `otel_scope_name=~"$service"`, and **data links**
+    ("Open in Jaeger") on each metric panel that jump to the Jaeger search UI
+    for the same service/route.
+  - Alert rule `High 5xx error rate` is provisioned
+    (`grafana/provisioning/alerting/alerting.yaml`): PromQL error fraction per
+    service (`status=~"5.."` over all requests, `clamp_min` divide), threshold
+    `> 0.05`, `for: 1m`, labels `severity=warning`, folder/group
+    `otel-rust-demo`. Verified **firing** under load with correct
+    `{{ $labels.otel_scope_name }}` interpolation.
+  - Datasources pinned to deterministic UIDs `prometheus` / `jaeger`
+    (`grafana/provisioning/datasources/datasources.yaml` — required by
+    provisioned alert rules, which can't auto-resolve names like dashboards
+    do). Jaeger datasource gets **trace-to-metrics**: click a span → jump to a
+    Prometheus query for the same service/route via `$__tags`.
+  - OTel/Prometheus metrics carry the service name as the `otel_scope_name`
+    label (`service_name` only exists on Prometheus's synthetic
+    `target_info`), so the variable, panel filters and alert rule all key off
+    `otel_scope_name`.
+  - Gotcha: Grafana's datasource provisioning expands `$VAR` env syntax, which
+    ate `$__tags`. `docker-compose.yml` sets `__tags=$$__tags` on the Grafana
+    container so `$__tags.` survives into the stored datasource JSON
+    (verified via `/api/datasources/uid/jaeger`).
+  - Verified live: dashboard renders with the `service` variable (all + single
+    service), data links present in field config, alert rule evaluates and
+    fires. Grafana provisioning only re-reads on startup — restart Grafana
+    after changing these files. If you ran an older version of this repo
+    (datasources without a pinned `uid`), `docker rm -f grafana` once so
+    provisioning starts from a clean DB.
+  - Docs: `docs/screenshots/grafana-dashboard-service.png`.
 - [ ] **12. CI pipeline**
   1h
   GitHub Actions that run `cargo build`, `cargo clippy`, and `cargo test` for

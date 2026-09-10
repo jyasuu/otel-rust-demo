@@ -69,8 +69,15 @@ payment-gateway ─────────────► otel-collector (trace
   text format at `GET /metrics`. Prometheus scrapes all three endpoints
   directly — no collector hop needed for metrics in this demo.
 - **Grafana** is pre-provisioned with both a Prometheus and a Jaeger
-  datasource, plus a starter dashboard (request rate, error rate, p95
-  latency, in-flight requests) that distinguishes the services.
+  datasource (pinned UIDs `prometheus` / `jaeger`), plus a dashboard (request
+  rate, error rate, p95 latency, in-flight requests) with a **`service`
+  variable dropdown** and "Open in Jaeger" data links on each panel, and a
+  provisioned **alert rule** that fires when a service's 5xx error rate
+  exceeds 5%. The Jaeger datasource is also configured for **trace-to-metrics**
+  (jump from a span to the matching Prometheus series via `$__tags`).
+  Grafana provisioning is read at startup, so run `docker compose restart
+  grafana` after editing anything under `grafana/` (and `docker rm -f grafana`
+  once if you previously ran an older version without pinned datasource UIDs).
 - **Logs**: both services bridge `tracing` events into an OTLP log exporter
   (`opentelemetry-appender-tracing`), which the collector receives on its
   `logs` pipeline. The legacy Jaeger `all-in-one` image cannot ingest OTLP
@@ -132,6 +139,7 @@ Captured against a running stack (see `docs/screenshots/`):
 | Jaeger — `request` root span with `route`/`client` tags, whole 3-service tree | `docs/screenshots/jaeger-request-tags.png` |
 | Jaeger — cross-service trace (app + billing) | `docs/screenshots/jaeger-cross-service.png` |
 | Grafana — "otel-rust-demo" dashboard | `docs/screenshots/grafana-dashboard.png` |
+| Grafana — dashboard with the `service` variable filtered to `otel-rust-demo` | `docs/screenshots/grafana-dashboard-service.png` |
 | Prometheus — `rate(http_requests_total[1m])` graph | `docs/screenshots/prometheus-graph.png` |
 
 ## Running locally (without Docker)
