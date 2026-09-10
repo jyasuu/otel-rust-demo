@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OpenTelemetry Rust Demo — Architecture",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jyasuu/otel-rust-demo.git",
+      "revision": "4412970dcf52b07532ec43b69a89398fbdffb7ca"
+    }
+  },
+  "components": [
+    { "id": "frontend", "type": "backend", "label": "Frontend", "sublabel": "Axum · :8080", "pos": [80, 180], "size": [160, 60], "sources": [{ "path": "src/main.rs", "label": "main" }] },
+    { "id": "billing", "type": "backend", "label": "Billing Service", "sublabel": "Axum + Tonic · :8081 / :50051", "pos": [80, 340], "size": [160, 60], "sources": [{ "path": "service-b/src/main.rs", "label": "main" }] },
+    { "id": "payment", "type": "external", "label": "Payment Gateway", "sublabel": "Axum · :8082", "pos": [80, 500], "size": [160, 60], "sources": [{ "path": "payment-gateway/src/main.rs", "label": "main" }] },
+    { "id": "collector", "type": "cloud", "label": "OTel Collector", "sublabel": "OTLP/gRPC · :4317", "pos": [520, 180], "size": [160, 60], "sources": [{ "path": "otel-collector/otel-collector-config.yaml", "label": "config" }] },
+    { "id": "prometheus", "type": "database", "label": "Prometheus", "sublabel": "Metrics · :9090", "pos": [520, 500], "size": [160, 60] },
+    { "id": "jaeger", "type": "cloud", "label": "Jaeger", "sublabel": "Traces · :16686", "pos": [920, 180], "size": [160, 60] },
+    { "id": "grafana", "type": "frontend", "label": "Grafana", "sublabel": "Dashboards · :3000", "pos": [920, 340], "size": [160, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Application Services", "wraps": ["frontend", "billing", "payment"], "pad": 40 },
+    { "kind": "region", "label": "Observability Stack", "wraps": ["collector", "prometheus", "jaeger", "grafana"], "pad": 40 }
+  ],
+  "connections": [
+    { "id": "frontend-grpc", "from": "frontend", "to": "billing", "label": "gRPC Billing/Charge", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [160, 274] },
+    { "id": "billing-http", "from": "billing", "to": "payment", "label": "HTTP /process", "fromSide": "bottom", "toSide": "top", "labelAt": [160, 434] },
+    { "id": "frontend-otel", "from": "frontend", "to": "collector", "label": "OTLP/gRPC", "variant": "dashed", "fromSide": "right", "toSide": "left" },
+    { "id": "billing-otel", "from": "billing", "to": "collector", "label": "OTLP/gRPC", "variant": "dashed", "fromSide": "right", "toSide": "left", "via": [[400, 370], [400, 210]] },
+    { "id": "payment-otel", "from": "payment", "to": "collector", "label": "OTLP/gRPC", "variant": "dashed", "fromSide": "right", "toSide": "left", "via": [[360, 530], [360, 210]] },
+    { "id": "collector-jaeger", "from": "collector", "to": "jaeger", "label": "OTLP/gRPC", "fromSide": "right", "toSide": "left" },
+    { "id": "collector-prom", "from": "collector", "to": "prometheus", "label": "Metrics Export", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [600, 460] },
+    { "id": "prom-grafana", "from": "prometheus", "to": "grafana", "label": "PromQL", "fromSide": "right", "toSide": "left" },
+    { "id": "jaeger-grafana", "from": "jaeger", "to": "grafana", "label": "Trace Query", "fromSide": "bottom", "toSide": "top", "labelAt": [1000, 274] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Application Services", "items": [
+      "3 Rust microservices in a Cargo workspace",
+      "Axum 0.8 for HTTP, Tonic 0.14 for gRPC",
+      "W3C TraceContext + Baggage propagation",
+      "OTel SDK 0.32 for traces, metrics, logs"
+    ]},
+    { "dot": "emerald", "title": "Observability Pipeline", "items": [
+      "OTel Collector: tail sampling, attribute pruning",
+      "Prometheus: 5s scrape of all services",
+      "Jaeger: distributed trace visualization",
+      "Grafana: dashboards + trace-to-metrics links"
+    ]}
+  ]
+}
